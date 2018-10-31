@@ -1,0 +1,342 @@
+---
+title: "HappyDB_analysis"
+author: "Siyu Zhu, sz2716"
+date: "9/17/2018"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+# Introduction\
+
+In this notebook, I'm trying to do some preliminary analysis on the HappyDB dataset, in the meanwhile introducing some basic and useful analytical tools/libraries.\
+
+This notebook consists of four parts:\
+
+1. Data preparation and basic analyses. The main tasks are loading the data, and drawing a word cloud.\
+2.  The distribution of happiness on "achievement", "affection" and "self-origin", based on overall population and subcategory population.\
+3. Marital and gender's influence on people's perchasing tendency.\
+4. Classification of marital. It's a binary classification problem, using text2vec package.\
+
+Let's get started!\
+
+##1. Data preparation and basic analysis\
+
+**1.1 Data preparation**\
+
+**Load data**
+```{r, message=FALSE, warning=FALSE}
+library(DT)
+library(tidyverse)
+library(tm)
+library(glmnet)
+hm_data <- read.csv(file="/Users/siyuzhu/Documents/Github/ADS/Fall2018-Proj1-Zhusy5/data/cleaned_hm.csv", header=TRUE)
+```
+
+```{r setup, include=FALSE}
+library(reticulate)
+library(prettydoc)
+# use_python("/usr/local/bin/python3")
+use_condaenv("tensorflow")	#Specify the name of a Conda environment.
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = TRUE)
+# Sys.setenv(python = '/anaconda3/envs/tensorflow/bin/python')
+```
+
+**Load packages**
+```{python}
+import pandas as pd
+import numpy as np
+import sys
+import tensorflow as tf
+import matplotlib.pyplot as plt
+# matplotlib.use('TkAgg')
+print('Python version ' + sys.version)
+print('Pandas version ' + pd.__version__)
+```
+
+**1.2 Word frequencey**\
+
+We want to find out what words people mention most in their happy moments. So we first to a word cloud.
+```{python}
+from wordcloud import WordCloud, ImageColorGenerator
+hm_data = pd.read_csv("../data/cleaned_hm.csv")
+df_hm = hm_data[hm_data['cleaned_hm'].notnull()]
+text = ' '.join(df_hm['cleaned_hm'].tolist())
+text = text.lower()
+wordcloud = WordCloud(background_color="white", font_path='../../../Library/Fonts/Arial.ttf', \
+                          height=2700, width=3600).generate(text)
+plt.figure( figsize=(14,8) )
+plt.imshow(wordcloud.recolor(colormap=plt.get_cmap('Set2')), interpolation='bilinear')
+plt.axis("off")
+plt.show()
+```
+
+Easy to see that some words appear more frequently, such as "work", "family" and "husband", which make sense. However, there are also some noisy words that are not very informative, such as "yesterday" and "today".\
+Thus, let's clean the word cloud by removing these noises.
+```{python}
+LIMIT_WORDS = ['happy', 'day', 'got', 'went', 'today', 'made', 'one', 'two', 'time', 'last', 'first', 'going', 'getting', 'took', 'found', 'lot', 'really', 'saw', 'see', 'month', 'week', 'day', 'yesterday', 'year', 'ago', 'now', 'still', 'since', 'something', 'great', 'good', 'long', 'thing', 'toi', 'without', 'yesteri', '2s', 'toand', 'ing']
+
+text = ' '.join(df_hm['cleaned_hm'].tolist())
+text = text.lower()
+for w in LIMIT_WORDS:
+    text = text.replace(' ' + w, '')
+    text = text.replace(w + ' ', '')
+wordcloud = WordCloud(background_color="white", font_path='../../../Library/Fonts/Arial.ttf', \
+                          height=2700, width=3600).generate(text)
+plt.figure( figsize=(14,8) )
+plt.imshow(wordcloud.recolor(colormap=plt.get_cmap('Set2')), interpolation='bilinear')
+plt.axis("off")
+plt.show()
+```
+
+##2. The distribution of happiness\
+
+**2.1 Overall happy distribution**\
+
+We noticed that there is a "predicted_category" column in hm_data, therefore, we want to find out the happiness distribution based on these categories. 
+```{r}
+sum(is.null(hm_data$predicted_category))
+category_sum1 <- as.data.frame(table(hm_data$predicted_category))
+category_sum1
+
+category_sum1 <- mutate(category_sum1, Prob = Freq / sum(category_sum1$Freq))
+prob <- category_sum1$Prob
+names(prob) <- c("achievement", "affection", "bonding", "enjoy_the_moment", "exercise", "leisure", "nature")
+prob <- as.data.frame(prob)
+names(prob) <- "whole_prob"
+
+library(ggplot2)
+ggplot(category_sum1, aes(x = Var1, y = Freq)) +
+  geom_bar(fill = "#0073C2FF", stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.3) 
+
+```
+
+We can tell from the above figure that among all the happiness-reasons, people have been more frequently made happy due to the achievement they made and affection they have (the latter one is slightly more influential than the former one), which really makes sense.\
+Moreover, these two factors are much more influential than all the other factors.\
+
+Now, if we look more closely to the factors in the data, we will find that all these factors can be merged and divided into only three bigger factors: "achievment", "affection", and "self-made"(which means self/individual activites, such as exercise, enjoy the moment, relax). We shall do another happiness distribution based on this divide. 
+
+```{r}
+category_sum2 <- data.frame("category" = c("achievement", "affection", "self_origin"), "Freq" = c(category_sum1$Freq[category_sum1$Var1 == "achievement"], category_sum1$Freq[category_sum1$Var1 == "affection"] + category_sum1$Freq[category_sum1$Var1 == "bonding"], category_sum1$Freq[category_sum1$Var1 == "enjoy_the_moment"] + category_sum1$Freq[category_sum1$Var1 == "exercise"] + category_sum1$Freq[category_sum1$Var1 == "leisure"] + category_sum1$Freq[category_sum1$Var1 == "nature"]))
+
+library(ggplot2)
+ggplot(category_sum2, aes(x = category, y = Freq)) +
+  geom_bar(fill = "#0073C2FF", stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.3) 
+```
+We can see that affection is still the number one influential factor for happiness, which matches the result of the 75-year Havard study: Good relationships keep us happier and healthier!
+
+
+**2.2 Subcategory-based happy distribution**\
+
+Now combined with the given demographic data, we can find out the happiness distributions for subcategories(male, female, single, married, nonparent, parent), their .\
+
+load demographic data and do inner join
+```{r}
+library(dplyr)
+demo_data <- read.csv(file="/Users/siyuzhu/Documents/Github/ADS/Fall2018-Proj1-Zhusy5/data/demographic.csv", header=TRUE)
+
+hmdemo_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         hmid,
+         cleaned_hm,
+         predicted_category,
+         gender, 
+         marital, 
+         parenthood,
+         age, 
+         country, 
+         reflection_period) 
+# datatable(head(hmdemo_data))
+```
+
+```{r}
+# for male
+male_cate <- hmdemo_data[hmdemo_data$gender == "m", 4]
+male_sum <- as.data.frame(table(male_cate))
+male_sum <- mutate(male_sum, Prob = Freq / sum(male_sum$Freq))
+prob$male_prob <- male_sum$Prob
+
+# for female
+female_cate <- hmdemo_data[hmdemo_data$gender == "f", 4]
+female_sum <- as.data.frame(table(female_cate))
+female_sum <- mutate(female_sum, Prob = Freq / sum(female_sum$Freq))
+prob$female_prob <- female_sum$Prob
+
+# for single
+single_cate <- hmdemo_data[hmdemo_data$marital == "single", 4]
+single_sum <- as.data.frame(table(single_cate))
+single_sum <- mutate(single_sum, Prob = Freq / sum(single_sum$Freq))
+prob$single_prob <- single_sum$Prob
+
+# for marital
+married_cate <- hmdemo_data[hmdemo_data$marital == "married", 4]
+married_sum <- as.data.frame(table(married_cate))
+married_sum <- mutate(married_sum, Prob = Freq / sum(married_sum$Freq))
+prob$married_prob <- married_sum$Prob
+
+# for nonparent
+nonparent_cate <- hmdemo_data[hmdemo_data$parenthood == "n", 4]
+nonparent_sum <- as.data.frame(table(nonparent_cate))
+nonparent_sum <- mutate(nonparent_sum, Prob = Freq / sum(nonparent_sum$Freq))
+prob$nonparent_prob <- nonparent_sum$Prob
+
+# for parent
+parent_cate <- hmdemo_data[hmdemo_data$parenthood == "y", 4]
+parent_sum <- as.data.frame(table(parent_cate))
+parent_sum <- mutate(parent_sum, Prob = Freq / sum(parent_sum$Freq))
+prob$parent_prob <- parent_sum$Prob
+
+prob <- t(prob)
+prob
+
+graph_data <- data.frame("sector" = rep(c("whole_prob", "male_prob", "female_prob", "single_prob", "married_prob", "nonparent_prob", "parent_prob"), 7),  "category" = rep(names(table(hmdemo_data$predicted_category)), each = 7), "freq" = c(as.numeric(prob[,1]), as.numeric(prob[,2]), as.numeric(prob[,3]), as.numeric(prob[,4]), as.numeric(prob[,5]), as.numeric(prob[,6]), as.numeric(prob[,7])))
+
+graph_data2 <- data.frame(category = as.numeric(as.factor(graph_data$category)),
+                          freq = graph_data$freq,
+                          sector = graph_data$sector)
+
+ggplot(graph_data2, aes(x=category, y=freq, fill=sector)) + 
+    geom_area() +
+  scale_x_continuous(breaks=seq(1, 7, 1),
+        labels=names(table(graph_data$category)))
+```
+Easy to tell that the happiness distribution patten for overall population still works for subcategory's population.\
+Moreover, if we look closer, we shall notice that:
+1. compared with male, female attaches more importance to affection, whereas male pays more attention to achievement; 
+2. compared with nonparent people, parent people attache more importance to affection, whereas nonparent people pay more attention to achievement; 
+3. compared with single people, married people attache more importance to affection, whereas single ones pay more attention to achievement.
+All of these make sense in real world. 
+
+##3. Perchase tendency\
+
+From part2, gende and marriage make people attach different level of imprtance to affection and achievment. Furthermore, I m also interested in what these two factors' influence on people's daily purchase tendency. 
+```{r}
+count_purchase_hm <- function(data_subset){
+  pattern = "(buy) | (purchase) | (bought) | (perchased) | (shopping)"
+  corpus_purchase_selection <- sapply(data_subset$cleaned_hm, grep, pattern = pattern)
+  v = c()
+  for (i in 1:length(corpus_purchase_selection)){
+    test = (as.numeric(corpus_purchase_selection[i] == 1) != 1)
+    if(is.na(test)){
+      
+    }
+    else{
+      v = c(v, i)
+    }
+  }
+  return(length(v))
+}
+
+m_shop <- count_purchase_hm(subset(hmdemo_data, marital == "married"))
+s_shop <- count_purchase_hm(subset(hmdemo_data, marital == "single"))
+m_f_shop <- count_purchase_hm(subset(hmdemo_data, marital == "married" & gender == "f"))
+m_m_shop <- count_purchase_hm(subset(hmdemo_data, marital == "married" & gender == "m"))
+s_f_shop <- count_purchase_hm(subset(hmdemo_data, marital == "single" & gender == "f"))
+s_m_shop <- count_purchase_hm(subset(hmdemo_data, marital == "single" & gender == "m"))
+
+data.frame(class = c("married", "single", "married_female", "married_male", "single_female", "single_male"), number = c(m_shop, s_shop, m_f_shop, m_m_shop, s_f_shop, s_m_shop))
+```
+
+From the above dataframe, we notice that single poeple have more purchase tendency than married people (maybe because married people have higher financial pressure and thus buy less to save more).\
+And for married female and married male, there is no big diffenrence in purchasing, which also makes sense, since couple may share family expenditure together.\
+Single male, however, buy much more stuff than single female (double actually!), which is a quite interesting finding. 
+
+##4. A logistic regression classifier for marital\
+
+Here, we want to classify people into "single" or "married" categories based on their happy moment text. \
+
+First of all let’s split out dataset into two parts - train and test. We will show how to perform data manipulations on train set and then apply exactly the same manipulations on the test set
+```{r}
+library(text2vec)
+library(data.table)
+library(magrittr)
+hmdemo_data <- hmdemo_data[hmdemo_data$marital %in% c("single", "married"), ]
+hm_marry <- hmdemo_data[, c("hmid", "cleaned_hm", "marital")]
+hm_marry$marital <- as.numeric(as.factor(hm_marry$marital)) - 1
+setDT(hm_marry)
+setkey(hm_marry, hmid)
+set.seed(2017L)
+all_ids = hm_marry$hmid
+train_ids = sample(all_ids, 76359)
+test_ids = setdiff(all_ids, train_ids)
+train = hm_marry[J(train_ids)]
+test = hm_marry[J(test_ids)]
+```
+
+Let’s then create a vocabulary-based DTM. Here we collect unique terms from all documents and mark each of them with a unique ID using the create_vocabulary() function. We use an iterator to create the vocabulary.
+```{r}
+prep_fun = tolower
+tok_fun = word_tokenizer
+#hmdemo_data <- read.csv("hm_data_withdemo.csv", stringsAsFactors = F)
+it_train = itoken(train$cleaned_hm, 
+             preprocessor = prep_fun, 
+             tokenizer = tok_fun, 
+             ids = train$hmid, 
+             progressbar = TRUE)
+vocab = create_vocabulary(it_train)
+vocab
+```
+
+Now that we have a vocabulary, we can construct a document-term matrix.
+```{r}
+vectorizer = vocab_vectorizer(vocab)
+t1 = Sys.time()
+dtm_train = create_dtm(it_train, vectorizer)
+print(difftime(Sys.time(), t1, units = 'sec'))
+```
+
+Now we have a DTM and can check its dimensions.
+```{r}
+dim(dtm_train)
+```
+As you can see, the DTM has 76359 rows, equal to the number of documents, and 24555 columns, equal to the number of unique terms.\
+
+Now we are ready to fit our first model. Here we will use the glmnet package to fit a logistic regression model with an L1 penalty and 4 fold cross-validation.
+```{r}
+library(glmnet)
+NFOLDS = 4
+t1 = Sys.time()
+glmnet_classifier = cv.glmnet(x = dtm_train, y = train$marital, 
+                              family = 'binomial', 
+                              # L1 penalty
+                              alpha = 1,
+                              # interested in the area under ROC curve
+                              type.measure = "auc",
+                              # 5-fold cross-validation
+                              nfolds = NFOLDS,
+                              # high value is less accurate, but has faster training
+                              thresh = 1e-3,
+                              # again lower number of iterations for faster training
+                              maxit = 1e3)
+print(difftime(Sys.time(), t1, units = 'sec'))
+```
+
+
+```{r}
+plot(glmnet_classifier)
+```
+
+```{r}
+print(paste("max AUC =", round(max(glmnet_classifier$cvm), 4)))
+```
+We have successfully fit a model to our DTM. Now we can check the model’s performance on test data. Note that we use exactly the same functions from prepossessing and tokenization. Also we reuse/use the same vectorizer - function which maps terms to indices.
+
+```{r}
+# Note that most text2vec functions are pipe friendly!
+it_test = test$cleaned_hm %>% 
+  prep_fun %>% tok_fun %>% 
+  # turn off progressbar because it won't look nice in rmd
+  itoken(ids = test$hmid, progressbar = FALSE)
+         
+
+dtm_test = create_dtm(it_test, vectorizer)
+
+preds = predict(glmnet_classifier, dtm_test, type = 'response')[,1]
+glmnet:::auc(test$marital, preds)
+```
+As we can see, prediction performance (72.55% precision) on the test data is roughly the same as we expect from cross-validation (74.88% precision), which is not bad.
