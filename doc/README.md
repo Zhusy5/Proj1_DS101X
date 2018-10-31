@@ -1,5 +1,4 @@
-# ADS Project 1: What made you happy today?
-### Doc folder
+# EDA Project Example: What made you happy today?
 
 This project consists of four parts:
 

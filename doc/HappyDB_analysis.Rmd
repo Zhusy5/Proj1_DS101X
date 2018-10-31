@@ -1,11 +1,11 @@
 ---
 title: "HappyDB_analysis"
-author: "Siyu Zhu, sz2716"
-date: "9/17/2018"
+author: "Siyu Zhu"
+date: "10/15/2018"
 output:
-  pdf_document: default
-  html_document:
-    df_print: paged
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
 ---
 
 # Introduction\
